@@ -73,7 +73,7 @@ Nodes also have a **tier** that reflects maturity:
 
 ### Search
 
-Press `/` anywhere on the map to open search. Type-ahead matches against node labels and descriptions. Select a result and the map pans and zooms to it automatically.
+Press `/` anywhere on the map to open search. Type-ahead matches against node labels and descriptions, ranked by relevance. Select a result and the map pans and zooms to it automatically.
 
 ### Filters
 
@@ -83,22 +83,24 @@ Toggle visibility by level (Hub, Junction, Stop, Marker), status (Anchored, Draf
 
 Click the **Route** button in the search bar to enter path mode. Pick a start and end node, hit **Find Path**, and the shortest route is highlighted on the map — a thick animated blue line with a step-by-step panel showing each hop and whether it follows the hierarchy or a cross-edge.
 
-This is useful for understanding how concepts connect across different parts of your project, and for defining intentional context windows for an LLM.
+Useful for understanding how concepts connect across different parts of your project, and for defining intentional context windows for a model.
 
 ### Direct Manipulation
 
 - **Click** a station to inspect its label, notes, and line
+- **Click a transfer line** to select it — change its relationship type or delete it
 - **Drag** the background to pan around the map
 - **Scroll wheel** to zoom in and out
 - **Double-click** empty space to drop a new node
 - **Sparkle button** to suggest connections based on text similarity
 - **Connect mode** to draw your own cross-edges between any two nodes
+- **Anchor / Draft** to toggle a node's maturity state in either direction
 
 ---
 
 ## MCP Engine
 
-The map-engine provides 9 MCP tools that Claude Code can call directly:
+The map-engine provides 8 MCP tools that Claude Code can call directly:
 
 | Tool | What it does |
 |------|-------------|
@@ -140,7 +142,7 @@ The project runs entirely locally. No data leaves your machine.
 
 The codebase is split into three layers:
 
-- **scaffold/** — The Vite + React viewer. Pure SVG rendering, force-directed layout, Zustand state. No external graph library. Optional Three.js terrain view available but not loaded by default.
+- **scaffold/** — Vite + React viewer. Pure SVG rendering, force-directed layout, Zustand state. No external graph library. DM Mono typeface, Material Symbols icons.
 - **engine/** — Node.js MCP server backed by SQLite (WAL mode). FTS5 full-text search, TF-IDF semantic similarity, BFS/DFS traversal, knowledge graph with temporal facts, and a 4-layer context assembly system with token budgeting.
 - **skill/** — Claude Code slash commands that bridge the two. `/update-map` reads your project and writes seed data. `/query-map` and `/map-context` let Claude navigate the map programmatically.
 
