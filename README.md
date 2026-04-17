@@ -99,6 +99,6 @@ The metro map metaphor came from actually riding the subway. You don't need to k
 
 ---
 
-Wouldn't exist without [memPalace](https://github.com/MemPalace/mempalace).
+This project wouldn't exist without [memPalace](https://github.com/MemPalace/mempalace). We were highly inspired by the work done by the team and wanted to expand on some of the underlying ideas.
 
 MIT
