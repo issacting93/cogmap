@@ -17,7 +17,7 @@ Claude scans your project and populates the map. Vite hot-reloads. Your browser 
 
 ---
 
-![cogmap screenshot](https://github.com/user-attachments/assets/placeholder)
+![cogmap screenshot](screenshot.png)
 
 ---
 
