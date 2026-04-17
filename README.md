@@ -17,6 +17,32 @@ Claude scans your project and populates the map. Vite hot-reloads. Your browser 
 
 ---
 
+## CLI
+
+```bash
+npx cogmap init [--name "Project Name"]   # scaffold a new map
+npx cogmap upgrade                        # update an existing map to the latest version
+npx cogmap version                        # print the installed version
+```
+
+**`init`** creates three things in your project root:
+
+```
+map-viewer/     Vite + React app — open this in your browser
+map-engine/     MCP server — Claude Code connects to this automatically
+.claude/
+  commands/
+    update-map.md    /update-map
+    query-map.md     /query-map
+    map-context.md   /map-context
+```
+
+It also writes the MCP server config to `.claude/settings.local.json` so Claude Code picks it up immediately — no manual setup.
+
+**`upgrade`** re-syncs your `map-viewer/` and `map-engine/` with the latest scaffold, preserving `src/seed.ts` (your project's node data). Skills are always updated to the latest version.
+
+---
+
 ![cogmap screenshot](screenshot.png)
 
 ![cogmap search](screenshot-search.png)
