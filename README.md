@@ -19,6 +19,8 @@ Claude scans your project and populates the map. Vite hot-reloads. Your browser 
 
 ![cogmap screenshot](screenshot.png)
 
+![cogmap search](screenshot-search.png)
+
 ---
 
 Every concept, file, and connection in your project — laid out like a transit map. Hubs are lines. Ideas are stations. Cross-dependencies are transfer corridors.
