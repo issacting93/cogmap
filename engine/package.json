@@ -1,0 +1,19 @@
+{
+  "name": "cogmap-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --import tsx src/index.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.9.1",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "tsx": "^4.19.4"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "typescript": "^5.7.3"
+  }
+}

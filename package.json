@@ -1,6 +1,6 @@
 {
   "name": "cogmap",
-  "version": "0.1.0",
+  "version": "0.4.1",
   "description": "Cognitive map viewer for any project. Scaffolds an interactive metro-style map that Claude keeps in sync with your project state.",
   "bin": {
     "cogmap": "./bin/init.js"

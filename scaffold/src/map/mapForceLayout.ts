@@ -1,7 +1,5 @@
-import type { MemoryNode } from '../types';
-import type { CrossEdge } from '../types';
-
-const WORLD_NODE_ID = '__overview_world__';
+import type { MemoryNode, CrossEdge } from '../types';
+import { WORLD_NODE_ID } from '../constants';
 
 interface P { x: number; y: number; vx: number; vy: number; }
 

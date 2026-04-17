@@ -11,7 +11,10 @@ interface AppState {
   updateAnchor: (id: string, patch: Partial<MemoryNode>) => void;
   removeAnchor: (id: string) => void;
   promoteAnchor: (id: string) => void;
+  demoteAnchor: (id: string) => void;
   addCrossEdge: (data: Omit<CrossEdge, 'id'>) => void;
+  updateCrossEdge: (id: string, patch: Partial<CrossEdge>) => void;
+  removeCrossEdge: (id: string) => void;
 }
 
 let _counter = 1000;
@@ -51,8 +54,28 @@ export const useAppStore = create<AppState>((set) => ({
     }));
   },
 
+  demoteAnchor: (id) => {
+    set((s) => ({
+      anchors: s.anchors.map((a) =>
+        a.id === id ? { ...a, tier: 'st' as const } : a,
+      ),
+    }));
+  },
+
   addCrossEdge: (data) => {
     const id = `xe_${++_counter}`;
     set((s) => ({ crossEdges: [...s.crossEdges, { ...data, id }] }));
+  },
+
+  updateCrossEdge: (id, patch) => {
+    set((s) => ({
+      crossEdges: s.crossEdges.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+    }));
+  },
+
+  removeCrossEdge: (id) => {
+    set((s) => ({
+      crossEdges: s.crossEdges.filter((e) => e.id !== id),
+    }));
   },
 }));

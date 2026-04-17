@@ -2,6 +2,10 @@ import { useEffect, useRef, useMemo, useCallback, useReducer, useState } from 'r
 import type { MemoryNode, MemoryLevel } from '../types';
 import { useAppStore } from '../store';
 import { forceLayout, suggestConnections } from './mapForceLayout';
+import {
+  WORLD_NODE_ID, LINE_COLORS, SANS, MONO,
+  ACCENT, TEXT, DIM, BORDER, BG, ORPHAN_COLOR,
+} from '../constants';
 
 /* ── Props ──────────────────────────────────────────────────────────────────── */
 
@@ -10,6 +14,12 @@ interface Props {
   selectedNodeId: string | null;
   onNodeClick: (id: string) => void;
   onBackgroundClick?: () => void;
+  /** Node IDs forming a highlighted path (in order) */
+  highlightedPath?: string[];
+  /** Node to auto-pan/zoom to */
+  focusNodeId?: string | null;
+  /** Called after focus animation completes */
+  onFocusComplete?: () => void;
 }
 
 /* ── Map vocabulary ─────────────────────────────────────────────────────────── */
@@ -31,21 +41,6 @@ const NEW_DEFAULT: Record<string, string> = {
 /* ── Constants ──────────────────────────────────────────────────────────────── */
 
 const SCALE = 55;
-const ACCENT = '#6C63FF';
-const TEXT = '#1a1a1a';
-const DIM = '#999';
-const BORDER = '#e5e5e5';
-const BG = '#fafaf7';
-const ORPHAN_COLOR = '#7F8C8D';
-const SANS = "'Inter', system-ui, -apple-system, sans-serif";
-const MONO = "'Courier New', Consolas, monospace";
-
-const LINE_COLORS = [
-  '#E32119', '#0098D4', '#FFCD00', '#00A651', '#9B0058',
-  '#EE7C0E', '#00BCD4', '#7B5AA6', '#B58B00',
-];
-
-const WORLD_NODE_ID = '__overview_world__';
 
 const PANEL_W = 280;
 const PANEL_H_EST = 240;
@@ -86,7 +81,7 @@ function stationRadius(level: string, zoom: number): number {
 
 /* ── Component ──────────────────────────────────────────────────────────────── */
 
-export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onBackgroundClick }: Props) {
+export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onBackgroundClick, highlightedPath, focusNodeId, onFocusComplete }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -97,6 +92,9 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
   const removeAnchor = useAppStore(s => s.removeAnchor);
   const promoteAnchor = useAppStore(s => s.promoteAnchor);
   const addCrossEdge = useAppStore(s => s.addCrossEdge);
+  const updateCrossEdge = useAppStore(s => s.updateCrossEdge);
+  const removeCrossEdge = useAppStore(s => s.removeCrossEdge);
+  const demoteAnchor = useAppStore(s => s.demoteAnchor);
   const activeConversationId = useAppStore(s => s.activeConversationId);
 
   // Pan/zoom (refs + RAF-batched forceUpdate)
@@ -116,6 +114,7 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
   // Interaction state
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [connectFromId, setConnectFromId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState(false);
   const [editingStory, setEditingStory] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -123,6 +122,11 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
   // Unseen nodes get a persistent pulse until the user interacts with them.
   // Only populated for nodes added AFTER the initial load (not for seed data).
   const [unseenIds, setUnseenIds] = useState<Set<string>>(new Set());
+
+  /* ── Path highlight set ───────────────────────────────────────────────────── */
+
+  const pathSet = useMemo(() => new Set(highlightedPath ?? []), [highlightedPath]);
+  const hasPath = pathSet.size > 1;
 
   /* ── Derived data ─────────────────────────────────────────────────────────── */
 
@@ -195,7 +199,7 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
     return { node, cityLabel, cityColor };
   }, [selectedNodeId, anchors, byId, partColor]);
 
-  useEffect(() => { setEditingLabel(false); setEditingStory(false); }, [selectedNodeId]);
+  useEffect(() => { setEditingLabel(false); setEditingStory(false); setSelectedEdgeId(null); }, [selectedNodeId]);
 
   /* ── Position interpolation (smooth reflow on layout changes) ─────────────── */
 
@@ -207,10 +211,6 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
     const t = targetPosRef.current;
     const d = displayPosRef.current;
     let stillMoving = false;
-    d.forEach((pt) => {
-      // pt itself; need id from outer iteration
-    });
-    // Iterate again with id for clarity
     d.forEach((pt, id) => {
       const target = t.get(id);
       if (!target) return;
@@ -318,6 +318,44 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
     return [(wx - p.x) * z * SCALE + w / 2, (wy - p.y) * z * SCALE + h / 2];
   }, []);
 
+  /* ── Focus node: auto-pan/zoom ─────────────────────────────────────────── */
+
+  const focusAnimRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!focusNodeId) return;
+    const target = worldPos.get(focusNodeId);
+    if (!target) return;
+
+    const targetZoom = 1.6;
+    let frame = 0;
+    const frames = 30;
+    const startPan = { ...panRef.current };
+    const startZoom = zoomRef.current;
+
+    const step = () => {
+      frame++;
+      const t = frame / frames;
+      // ease-out cubic
+      const e = 1 - Math.pow(1 - t, 3);
+      panRef.current = {
+        x: startPan.x + (target.x - startPan.x) * e,
+        y: startPan.y + (target.y - startPan.y) * e,
+      };
+      zoomRef.current = startZoom + (targetZoom - startZoom) * e;
+      forceUpdate();
+      if (frame < frames) {
+        focusAnimRef.current = requestAnimationFrame(step);
+      } else {
+        focusAnimRef.current = null;
+        onFocusComplete?.();
+      }
+    };
+    focusAnimRef.current = requestAnimationFrame(step);
+    return () => {
+      if (focusAnimRef.current !== null) cancelAnimationFrame(focusAnimRef.current);
+    };
+  }, [focusNodeId, worldPos, onFocusComplete]);
+
   /* ── Manipulation ─────────────────────────────────────────────────────────── */
 
   const createNew = useCallback((opts: { parentId: string | null; level: MemoryLevel; label: string }) => {
@@ -360,6 +398,11 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
     promoteAnchor(selectedDetail.node.id);
   }, [selectedDetail, promoteAnchor]);
 
+  const handleDemote = useCallback(() => {
+    if (!selectedDetail) return;
+    demoteAnchor(selectedDetail.node.id);
+  }, [selectedDetail, demoteAnchor]);
+
   const handleRemove = useCallback(() => {
     if (!selectedDetail) return;
     if (window.confirm(`Remove "${selectedDetail.node.label}" from the map?`)) {
@@ -379,7 +422,7 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
   const handleStorySave = useCallback((newStory: string) => {
     if (!selectedDetail) return;
     if (newStory !== (selectedDetail.node.story ?? '')) {
-      updateAnchor(selectedDetail.node.id, { context: newStory } as Partial<MemoryNode>);
+      updateAnchor(selectedDetail.node.id, { story: newStory });
     }
     setEditingStory(false);
   }, [selectedDetail, updateAnchor]);
@@ -406,6 +449,7 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
         setConnectFromId(null);
         setEditingLabel(false);
         setEditingStory(false);
+        setSelectedEdgeId(null);
       }
     }
     window.addEventListener('keydown', onKey);
@@ -642,6 +686,12 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
             from { opacity: 0; transform: scale(0.92); }
             to { opacity: 1; transform: scale(1); }
           }
+          @keyframes path-dash {
+            to { stroke-dashoffset: -24; }
+          }
+          .path-glow {
+            animation: path-dash 0.8s linear infinite;
+          }
         `}</style>
 
         <rect
@@ -674,16 +724,20 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
           const dxe = tx - sx, dye = ty - sy;
           const cpx = mx + (-dye * 0.18);
           const cpy = my + (dxe * 0.18);
+          const isSelEdge = edge.id === selectedEdgeId;
+          const d = `M ${sx} ${sy} Q ${cpx} ${cpy} ${tx} ${ty}`;
           return (
-            <path
-              key={edge.id}
-              d={`M ${sx} ${sy} Q ${cpx} ${cpy} ${tx} ${ty}`}
-              stroke="rgba(60,60,60,0.55)"
-              strokeWidth="1.2"
-              strokeDasharray="5 4"
-              fill="none"
-              pointerEvents="none"
-            />
+            <g key={edge.id} style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setSelectedEdgeId(isSelEdge ? null : edge.id); onBackgroundClick?.(); }}>
+              {/* Fat invisible hit area */}
+              <path d={d} stroke="transparent" strokeWidth="12" fill="none" />
+              <path
+                d={d}
+                stroke={isSelEdge ? ACCENT : 'rgba(60,60,60,0.55)'}
+                strokeWidth={isSelEdge ? 2 : 1.2}
+                strokeDasharray="5 4"
+                fill="none"
+              />
+            </g>
           );
         })}
 
@@ -733,6 +787,27 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
           );
         })()}
 
+        {/* Path overlay */}
+        {hasPath && highlightedPath && highlightedPath.length > 1 && (() => {
+          const points: [number, number][] = [];
+          for (const nid of highlightedPath) {
+            const p = getPos(nid);
+            if (p) points.push(w2s(p.x, p.y));
+          }
+          if (points.length < 2) return null;
+          const d = points.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt[0]} ${pt[1]}`).join(' ');
+          return (
+            <>
+              {/* Glow underneath */}
+              <path d={d} stroke="#2979FF" strokeWidth="8" fill="none" strokeLinecap="round" strokeLinejoin="round" opacity="0.15" pointerEvents="none" />
+              {/* Solid path */}
+              <path d={d} stroke="#2979FF" strokeWidth="4" fill="none" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" pointerEvents="none" />
+              {/* Animated dashes on top */}
+              <path d={d} stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="8 16" className="path-glow" pointerEvents="none" />
+            </>
+          );
+        })()}
+
         {/* Stations */}
         {drawOrder.map(a => {
           const p = getPos(a.id);
@@ -745,6 +820,8 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
           const isSt = a.tier === 'st';
           const isNew = newIds.has(a.id);
           const isUnseen = unseenIds.has(a.id) && !isSel;
+          const isOnPath = pathSet.has(a.id);
+          const dimmed = hasPath && !isOnPath && !isSel;
           const r = stationRadius(a.level, z);
 
           let shape: JSX.Element;
@@ -792,6 +869,7 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
               onClick={(e) => { e.stopPropagation(); handleStationClick(a.id); }}
               onMouseEnter={() => setHoveredId(a.id)}
               onMouseLeave={() => setHoveredId(prev => prev === a.id ? null : prev)}
+              style={{ opacity: dimmed ? 0.2 : 1, transition: 'opacity 0.3s' }}
             >
               <g className={shapeClasses.join(' ')}>
                 {shape}
@@ -833,9 +911,11 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
           const isSel = a.id === selectedNodeId;
           const isHover = a.id === hoveredId;
           const isSt = a.tier === 'st';
+          const isOnPath = pathSet.has(a.id);
+          const dimmedLabel = hasPath && !isOnPath && !isSel;
           const r = stationRadius(a.level, z);
 
-          const alwaysShow = a.level === 'parts' || isSel || isHover;
+          const alwaysShow = a.level === 'parts' || isSel || isHover || isOnPath;
           if (!alwaysShow) {
             if (a.level === 'aspects' && z < 0.7) return null;
             if (a.level === 'points' && z < 1.0) return null;
@@ -849,7 +929,7 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
           const ly = sy;
 
           return (
-            <g key={`label-${a.id}`} style={{ pointerEvents: 'none', transition: 'opacity 0.18s' }}>
+            <g key={`label-${a.id}`} style={{ pointerEvents: 'none', transition: 'opacity 0.18s', opacity: dimmedLabel ? 0.15 : 1 }}>
               <text
                 x={lx} y={ly}
                 fontSize={fontSize} fontWeight={weight} fontFamily={SANS}
@@ -880,7 +960,7 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
         fontFamily: SANS, fontSize: 11, fontWeight: 700, letterSpacing: 2.5, textTransform: 'uppercase',
         color: '#666',
       }}>
-        {{PROJECT_NAME}} · Cognitive Map
+        {'{{PROJECT_NAME}}'} &middot; Cognitive Map
       </div>
 
       {/* ── Connect-mode banner ── */}
@@ -894,9 +974,9 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
           <span><strong>Connect mode</strong> — click another station to link from <em>"{connectFromNode.label}"</em></span>
           <button
             onClick={() => setConnectFromId(null)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: DIM, fontSize: 14, padding: '0 4px' }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: DIM, padding: '0 4px', display: 'flex' }}
             title="Cancel (Esc)"
-          >✕</button>
+          ><span className="ms">close</span></button>
         </div>
       )}
 
@@ -1030,24 +1110,28 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
 
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                   {node.level !== 'stories' && (
-                    <button onClick={handleAddChild} style={actionBtnCss('default')}>
-                      + {ADD_LABEL[node.level] ?? 'Add stop'}
+                    <button onClick={handleAddChild} style={{ ...actionBtnCss('default'), display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                      <span className="ms" style={{ fontSize: 14 }}>add</span>{ADD_LABEL[node.level] ?? 'Add stop'}
                     </button>
                   )}
                   <button
                     onClick={() => setConnectFromId(node.id)}
-                    style={actionBtnCss(connectFromId === node.id ? 'primary' : 'default')}
+                    style={{ ...actionBtnCss(connectFromId === node.id ? 'primary' : 'default'), display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
                     disabled={!!connectFromId}
                   >
-                    ↗ Connect
+                    <span className="ms" style={{ fontSize: 14 }}>add_link</span>Connect
                   </button>
-                  {node.tier === 'st' && (
-                    <button onClick={handleAnchor} style={actionBtnCss('primary')}>
-                      ⚓ Anchor
+                  {node.tier === 'st' ? (
+                    <button onClick={handleAnchor} style={{ ...actionBtnCss('primary'), display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                      <span className="ms" style={{ fontSize: 14 }}>anchor</span>Anchor
+                    </button>
+                  ) : (
+                    <button onClick={handleDemote} style={{ ...actionBtnCss('default'), display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                      <span className="ms" style={{ fontSize: 14 }}>undo</span>Draft
                     </button>
                   )}
-                  <button onClick={handleRemove} style={actionBtnCss('danger')}>
-                    Remove
+                  <button onClick={handleRemove} style={{ ...actionBtnCss('danger'), display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                    <span className="ms" style={{ fontSize: 14 }}>delete</span>Remove
                   </button>
                 </div>
               </>
@@ -1063,7 +1147,7 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
           zIndex: 10, pointerEvents: 'none',
           fontFamily: SANS, fontSize: 11, color: '#aaa',
         }}>
-          Click a station to inspect · Double-click empty area to add a new stop · ✨ to suggest connections
+          Click a station to inspect · Double-click empty area to add a new stop · <span className="ms" style={{ fontSize: 13, verticalAlign: 'middle' }}>auto_awesome</span> to suggest connections
         </div>
       )}
 
@@ -1094,12 +1178,68 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
 
       {/* Toolbar */}
       <div style={{ position: 'absolute', bottom: 20, left: 20, display: 'flex', gap: 4, zIndex: 10, alignItems: 'center' }}>
-        <div style={btnCss} onClick={zoomIn} title="Zoom in">+</div>
-        <div style={btnCss} onClick={zoomOut} title="Zoom out">−</div>
-        <div style={{ ...btnCss, fontSize: 13 }} onClick={resetView} title="Reset view">◎</div>
+        <div style={btnCss} onClick={zoomIn} title="Zoom in"><span className="ms">add</span></div>
+        <div style={btnCss} onClick={zoomOut} title="Zoom out"><span className="ms">remove</span></div>
+        <div style={btnCss} onClick={resetView} title="Reset view"><span className="ms">center_focus_strong</span></div>
         <div style={{ width: 1, height: 22, background: BORDER, margin: '0 6px' }} />
-        <div style={{ ...btnCss, fontSize: 14 }} onClick={handleSuggest} title="Suggest connections from text similarity (top 3)">✨</div>
+        <div style={btnCss} onClick={handleSuggest} title="Suggest connections from text similarity (top 3)"><span className="ms">auto_awesome</span></div>
       </div>
+
+      {/* ── Edge detail panel ── */}
+      {(() => {
+        if (!selectedEdgeId) return null;
+        const edge = crossEdges.find(e => e.id === selectedEdgeId);
+        if (!edge) return null;
+        const srcNode = byId.get(edge.sourceAnchorId);
+        const tgtNode = byId.get(edge.targetAnchorId);
+        const EDGE_TYPES = ['CO_OCCURS_WITH', 'DEPENDS_ON', 'OPERATIONALIZES', 'RELATES_TO', 'BLOCKS', 'EXTENDS'];
+        return (
+          <div style={{
+            position: 'absolute', bottom: 70, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 13, width: 320, ...panelCss,
+            animation: 'panel-pop 0.2s ease-out',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: 1.5, textTransform: 'uppercase', color: '#aaa' }}>
+                Transfer
+              </div>
+              <button onClick={() => setSelectedEdgeId(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: DIM, padding: '0 2px', display: 'flex' }}><span className="ms">close</span></button>
+            </div>
+            <div style={{ fontFamily: SANS, fontSize: 12, color: TEXT, marginBottom: 10, lineHeight: 1.5 }}>
+              <span style={{ fontWeight: 600 }}>{srcNode?.label ?? '?'}</span>
+              <span style={{ color: DIM }}> → </span>
+              <span style={{ fontWeight: 600 }}>{tgtNode?.label ?? '?'}</span>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: 1, textTransform: 'uppercase', color: '#aaa', marginBottom: 6 }}>Relationship</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {EDGE_TYPES.map(t => (
+                  <button
+                    key={t}
+                    onClick={() => updateCrossEdge(edge.id, { edgeType: t })}
+                    style={{
+                      padding: '3px 8px', borderRadius: 4, fontFamily: MONO, fontSize: 9,
+                      cursor: 'pointer', letterSpacing: 0.5,
+                      border: `1px solid ${edge.edgeType === t ? ACCENT : BORDER}`,
+                      background: edge.edgeType === t ? `rgba(108,99,255,0.08)` : '#fff',
+                      color: edge.edgeType === t ? ACCENT : '#666',
+                      fontWeight: edge.edgeType === t ? 600 : 400,
+                    }}
+                  >
+                    {t.replace(/_/g, ' ')}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              onClick={() => { removeCrossEdge(edge.id); setSelectedEdgeId(null); }}
+              style={{ ...actionBtnCss('danger'), flex: 'none', width: '100%' }}
+            >
+              Remove transfer
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Toast */}
       {toast && (
