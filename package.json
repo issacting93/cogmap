@@ -5,6 +5,20 @@
   "bin": {
     "cogmap": "./bin/init.js"
   },
+  "files": [
+    "bin/",
+    "engine/src/",
+    "engine/package.json",
+    "engine/tsconfig.json",
+    "scaffold/src/",
+    "scaffold/index.html",
+    "scaffold/vite.config.ts",
+    "scaffold/tsconfig.json",
+    "scaffold/package.json",
+    "skill/",
+    "scripts/",
+    "README.md"
+  ],
   "type": "module",
   "license": "MIT",
   "scripts": {
