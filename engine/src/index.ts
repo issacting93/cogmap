@@ -27,7 +27,7 @@ const dbPath = process.env.COGMAP_DB_PATH
 
 const server = new McpServer({
   name: 'cogmap',
-  version: '0.1.0',
+  version: '0.5.0',
 });
 
 // ── Tool: cogmap_status ──

@@ -11,9 +11,6 @@ export interface MemoryNode {
   context?: string;
   x: number;
   y: number;
-  isGhost?: boolean;
-  sourceMessageId?: string;
-  conversationId?: string;
 }
 
 export interface CrossEdge {

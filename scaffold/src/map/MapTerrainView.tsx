@@ -95,7 +95,12 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
   const updateCrossEdge = useAppStore(s => s.updateCrossEdge);
   const removeCrossEdge = useAppStore(s => s.removeCrossEdge);
   const demoteAnchor = useAppStore(s => s.demoteAnchor);
-  const activeConversationId = useAppStore(s => s.activeConversationId);
+  const undo = useAppStore(s => s.undo);
+  const redo = useAppStore(s => s.redo);
+  const saveSeed = useAppStore(s => s.saveSeed);
+  const isDirty = useAppStore(s => s.isDirty);
+  const canUndo = useAppStore(s => s.canUndo);
+  const canRedo = useAppStore(s => s.canRedo);
 
   // Pan/zoom (refs + RAF-batched forceUpdate)
   const panRef = useRef({ x: 0, y: 0 });
@@ -360,12 +365,11 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
 
   const createNew = useCallback((opts: { parentId: string | null; level: MemoryLevel; label: string }) => {
     return addAnchor({
-      label: opts.label, context: '',
-      sourceMessageId: '', conversationId: activeConversationId ?? '',
+      label: opts.label,
       tier: 'st', level: opts.level, parentId: opts.parentId,
-      x: 1100, y: 820, isGhost: false,
+      x: 1100, y: 820,
     });
-  }, [addAnchor, activeConversationId]);
+  }, [addAnchor]);
 
   const handleStationClick = useCallback((id: string) => {
     if (connectFromId) {
@@ -442,7 +446,14 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
     setTimeout(() => setToast(null), 2800);
   }, [anchors, crossEdges, addCrossEdge]);
 
-  // ESC cancels modes
+  // Save handler — bakes current layout positions into node data
+  const handleSave = useCallback(async () => {
+    const ok = await saveSeed(worldPos);
+    setToast(ok ? 'Saved' : 'Save failed');
+    setTimeout(() => setToast(null), 2000);
+  }, [saveSeed, worldPos]);
+
+  // Keyboard shortcuts: ESC, Ctrl+Z, Ctrl+Shift+Z, Ctrl+S
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
@@ -450,11 +461,26 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
         setEditingLabel(false);
         setEditingStory(false);
         setSelectedEdgeId(null);
+        return;
+      }
+
+      const mod = e.metaKey || e.ctrlKey;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (mod && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if (mod && e.key === 'z' && e.shiftKey) {
+        e.preventDefault();
+        redo();
+      } else if (mod && e.key === 's') {
+        e.preventDefault();
+        handleSave();
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [undo, redo, handleSave]);
 
   /* ── Mount: resize observer + pan/zoom event handlers ─────────────────────── */
 
@@ -733,9 +759,10 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
               <path
                 d={d}
                 stroke={isSelEdge ? ACCENT : 'rgba(60,60,60,0.55)'}
-                strokeWidth={isSelEdge ? 2 : 1.2}
+                strokeWidth={isSelEdge ? 2 : 0.8 + edge.confidence * 1.4}
                 strokeDasharray="5 4"
                 fill="none"
+                opacity={isSelEdge ? 1 : 0.3 + edge.confidence * 0.7}
               />
             </g>
           );
@@ -1182,6 +1209,29 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
         <div style={btnCss} onClick={zoomOut} title="Zoom out"><span className="ms">remove</span></div>
         <div style={btnCss} onClick={resetView} title="Reset view"><span className="ms">center_focus_strong</span></div>
         <div style={{ width: 1, height: 22, background: BORDER, margin: '0 6px' }} />
+        <div
+          style={{ ...btnCss, position: 'relative', color: isDirty ? ACCENT : '#666' }}
+          onClick={handleSave}
+          title="Save (Ctrl+S)"
+        >
+          <span className="ms">save</span>
+          {isDirty && <div style={{ position: 'absolute', top: 3, right: 3, width: 7, height: 7, borderRadius: '50%', background: '#FF6B35' }} />}
+        </div>
+        <div
+          style={{ ...btnCss, opacity: canUndo ? 1 : 0.3, pointerEvents: canUndo ? 'auto' : 'none' }}
+          onClick={undo}
+          title="Undo (Ctrl+Z)"
+        >
+          <span className="ms">undo</span>
+        </div>
+        <div
+          style={{ ...btnCss, opacity: canRedo ? 1 : 0.3, pointerEvents: canRedo ? 'auto' : 'none' }}
+          onClick={redo}
+          title="Redo (Ctrl+Shift+Z)"
+        >
+          <span className="ms">redo</span>
+        </div>
+        <div style={{ width: 1, height: 22, background: BORDER, margin: '0 6px' }} />
         <div style={btnCss} onClick={handleSuggest} title="Suggest connections from text similarity (top 3)"><span className="ms">auto_awesome</span></div>
       </div>
 
@@ -1192,11 +1242,15 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
         if (!edge) return null;
         const srcNode = byId.get(edge.sourceAnchorId);
         const tgtNode = byId.get(edge.targetAnchorId);
-        const EDGE_TYPES = ['CO_OCCURS_WITH', 'DEPENDS_ON', 'OPERATIONALIZES', 'RELATES_TO', 'BLOCKS', 'EXTENDS'];
+        const EDGE_TYPES = [
+          'DEPENDS_ON', 'PRODUCES', 'VALIDATES', 'BLOCKS', 'IMPLEMENTS',
+          'DOCUMENTS', 'RELATED_TO', 'MAPS_TO', 'OPERATIONALIZES',
+          'CO_OCCURS_WITH', 'EXTENDS',
+        ];
         return (
           <div style={{
             position: 'absolute', bottom: 70, left: '50%', transform: 'translateX(-50%)',
-            zIndex: 13, width: 320, ...panelCss,
+            zIndex: 13, width: 340, ...panelCss,
             animation: 'panel-pop 0.2s ease-out',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -1230,6 +1284,19 @@ export default function MapTerrainView({ nodes, selectedNodeId, onNodeClick, onB
                   </button>
                 ))}
               </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: 1, textTransform: 'uppercase', color: '#aaa' }}>Confidence</div>
+                <div style={{ fontFamily: MONO, fontSize: 10, color: TEXT, fontWeight: 600 }}>{Math.round(edge.confidence * 100)}%</div>
+              </div>
+              <input
+                type="range"
+                min={0.5} max={1} step={0.05}
+                value={edge.confidence}
+                onChange={(e) => updateCrossEdge(edge.id, { confidence: parseFloat(e.target.value) })}
+                style={{ width: '100%', accentColor: ACCENT }}
+              />
             </div>
             <button
               onClick={() => { removeCrossEdge(edge.id); setSelectedEdgeId(null); }}
