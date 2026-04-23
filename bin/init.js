@@ -90,7 +90,11 @@ function init() {
 
   // 2. Copy skills
   mkdirSync(skillDir, { recursive: true });
-  for (const skill of ['update-map.md', 'query-map.md', 'map-context.md']) {
+  const skills = [
+    'update-map.md', 'query-map.md', 'map-context.md',
+    'validate-seed.md', 'audit-map.md', 'diff-seed.md', 'test-mcp.md', 'release.md',
+  ];
+  for (const skill of skills) {
     const dest = resolve(skillDir, skill);
     if (existsSync(dest)) {
       console.log(`  .claude/commands/${skill} already exists — skipping`);
@@ -112,10 +116,19 @@ function init() {
     });
   }
 
-  // 4. Configure MCP server
+  // 4. Copy validation scripts
+  const scriptsDir = resolve(CWD, 'scripts');
+  if (existsSync(scriptsDir)) {
+    console.log('  scripts/ already exists — skipping');
+  } else if (existsSync(resolve(PKG_ROOT, 'scripts'))) {
+    console.log('  Installing validation scripts...');
+    cpSync(resolve(PKG_ROOT, 'scripts'), scriptsDir, { recursive: true });
+  }
+
+  // 5. Configure MCP server
   configureMcp(engineDir);
 
-  // 5. Install dependencies
+  // 6. Install dependencies
   installDeps(viewerDir, 'viewer');
   installDeps(engineDir, 'engine');
 
@@ -209,7 +222,11 @@ function upgrade() {
 
   // Update skills (always overwrite — they're not user-editable)
   mkdirSync(skillDir, { recursive: true });
-  for (const skill of ['update-map.md', 'query-map.md', 'map-context.md']) {
+  const allSkills = [
+    'update-map.md', 'query-map.md', 'map-context.md',
+    'validate-seed.md', 'audit-map.md', 'diff-seed.md', 'test-mcp.md', 'release.md',
+  ];
+  for (const skill of allSkills) {
     const src = resolve(PKG_ROOT, 'skill', skill);
     const dest = resolve(skillDir, skill);
     if (existsSync(src)) {

@@ -1,2 +1,9 @@
 node_modules/
 .DS_Store
+*.db
+*.db-wal
+*.db-shm
+scaffold/dist/
+.obsidian/
+npm_recovery_codes*
+*.png

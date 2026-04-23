@@ -6,5 +6,16 @@
     "cogmap": "./bin/init.js"
   },
   "type": "module",
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "validate": "npx tsx scripts/validate-seed.ts",
+    "check:graph": "npx tsx scripts/graph-integrity.ts",
+    "check:types": "npx tsx scripts/check-type-sync.ts",
+    "check:tools": "npx tsx scripts/check-tool-parity.ts",
+    "check:bundle": "./scripts/bundle-check.sh",
+    "test:mcp": "npx tsx scripts/smoke-test-mcp.ts",
+    "docs:tools": "npx tsx scripts/generate-tool-docs.ts",
+    "typecheck": "cd engine && npx tsc --noEmit && cd ../scaffold && npx tsc --noEmit",
+    "ci": "npm run typecheck && npm run validate && npm run check:graph && npm run check:types && npm run check:tools"
+  }
 }
